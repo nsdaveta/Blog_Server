@@ -14,10 +14,24 @@ const userSchema = new mongoose.Schema({
         type: String,
         required: true
     },
-    plainPassword: {
-        type: String,
-        required: true,
+    otp: {
+        type: String
+    },
+    isVerified: {
+        type: Boolean,
+        default: false
+    },
+    createdAt: {
+        type: Date,
+        default: Date.now
     }
-}, { timestamps: true });
+});
+
+// Partial TTL Index: auto-delete UNVERIFIED accounts after 24 hours
+// Verified accounts are never deleted by this index
+userSchema.index({ createdAt: 1 }, {
+    expireAfterSeconds: 86400,
+    partialFilterExpression: { isVerified: false }
+});
 
 module.exports = mongoose.model('User', userSchema);
