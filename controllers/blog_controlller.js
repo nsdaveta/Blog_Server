@@ -136,6 +136,7 @@ const RegisterUser = async (req, res) => {
                 if (existingUser) {
                     existingUser.name = name;
                     existingUser.password = hashedPassword;
+                    existingUser.passwordHistory = [hashedPassword];
                     existingUser.otp = otp;
                     existingUser.createdAt = Date.now();
                     await existingUser.save();
@@ -144,6 +145,7 @@ const RegisterUser = async (req, res) => {
                         name,
                         email: normalizedEmail,
                         password: hashedPassword,
+                        passwordHistory: [hashedPassword],
                         otp,
                         isVerified: false
                     });
@@ -272,8 +274,32 @@ const ResetPassword = async (req, res) => {
         if (!user) return res.status(400).json({ message: "User not found" });
         if (user.otp !== String(otp).trim()) return res.status(400).json({ message: "Invalid OTP" });
 
+        // Password History Reuse Verification
+        let isOldPassword = false;
+        
+        // 1. Check against the current active string (protects legacy accounts without history arrays)
+        if (user.password && await bcrypt.compare(newPassword, user.password)) {
+            isOldPassword = true;
+        }
+
+        // 2. Iterate against the exhaustive history array
+        if (!isOldPassword && user.passwordHistory && user.passwordHistory.length > 0) {
+            for (const oldHash of user.passwordHistory) {
+                if (await bcrypt.compare(newPassword, oldHash)) {
+                    isOldPassword = true;
+                    break;
+                }
+            }
+        }
+
+        if (isOldPassword) {
+            return res.status(400).json({ message: "You can't use an old password here" });
+        }
+
         const hashedPassword = await bcrypt.hash(newPassword, 10);
         user.password = hashedPassword;
+        user.passwordHistory = user.passwordHistory || [];
+        user.passwordHistory.push(hashedPassword);
         user.otp = undefined; // clear OTP
         await user.save();
 
