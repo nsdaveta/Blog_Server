@@ -233,6 +233,54 @@ const ResendOTP = async (req, res) => {
         res.status(500).json({ message: "Failed to resend OTP. Please try again later." });
     }
 };
+
+const ForgotPassword = async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) return res.status(400).json({ message: "Email is required" });
+
+        const normalizedEmail = email.toLowerCase().trim();
+        const user = await User.findOne({ email: { $regex: new RegExp(`^${normalizedEmail}$`, "i") }});
+        if (!user) return res.status(404).json({ message: "User not found" });
+
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        user.otp = otp;
+        await user.save();
+
+        try {
+            const success = await sendEmail(user.email, 'Password Reset OTP - Blogify', generateOTPHtml(otp, "Your Password Reset OTP"));
+            if (success) return res.json({ message: "Password reset OTP sent to your email." });
+            else throw new Error("Mail connection failed");
+        } catch (mailError) {
+            return res.status(500).json({ message: "Failed to send OTP. Please try again later." });
+        }
+    } catch (error) {
+        res.status(500).json({ message: "An internal server error occurred." });
+    }
+};
+
+const ResetPassword = async (req, res) => {
+    try {
+        const { email, otp, newPassword } = req.body;
+        if (!email || !otp || !newPassword) return res.status(400).json({ message: "Email, OTP, and new password are required" });
+
+        const normalizedEmail = email.toLowerCase().trim();
+        const user = await User.findOne({ email: { $regex: new RegExp(`^${normalizedEmail}$`, "i") }});
+        
+        if (!user) return res.status(400).json({ message: "User not found" });
+        if (user.otp !== String(otp).trim()) return res.status(400).json({ message: "Invalid OTP" });
+
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        user.password = hashedPassword;
+        user.otp = undefined; // clear OTP
+        await user.save();
+
+        res.json({ message: "Password reset successfully. You can now log in." });
+    } catch (error) {
+        res.status(500).json({ message: "An internal server error occurred." });
+    }
+};
+
 // POST /login
 const LoginUser = async (req, res, next) => {
     const { email, password } = req.body;
@@ -393,4 +441,4 @@ const DeleteUsers = async (req, res) => {
     }
 };
 
-module.exports = { GetAllBlogs, RegisterUser, ValidateEmailDomain, VerifyOTP, ResendOTP, LoginUser, updateBlog, deleteBlog, VerifyToken, UserDashboard, CreateBlog, LogOutUser, Read_More, GetAllUsers, DeleteUsers};
+module.exports = { GetAllBlogs, RegisterUser, ValidateEmailDomain, VerifyOTP, ResendOTP, LoginUser, updateBlog, deleteBlog, VerifyToken, UserDashboard, CreateBlog, LogOutUser, Read_More, GetAllUsers, DeleteUsers, ForgotPassword, ResetPassword };

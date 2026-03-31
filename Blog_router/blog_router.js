@@ -14,7 +14,9 @@ const {
   DeleteUsers,
   ValidateEmailDomain,
   VerifyOTP,
-  ResendOTP
+  ResendOTP,
+  ForgotPassword,
+  ResetPassword
 } = require('../controllers/blog_controlller');
 const { registerValidation, loginValidation } = require('../middlewares/validator');
 const checkLogin = require('../middlewares/checklogin');
@@ -49,6 +51,8 @@ router.post('/register', registerValidation, RegisterUser);
 router.post('/verify-otp', VerifyOTP);
 router.post('/resend-otp', ResendOTP);
 router.post('/login', loginValidation, LoginUser);               // ✅ no auth middleware on login
+router.post('/forgot-password', ForgotPassword);
+router.post('/reset-password', ResetPassword);
 router.post('/logout', LogOutUser);
 router.get('/users', GetAllUsers);
 router.delete('/delete-users', DeleteUsers);
