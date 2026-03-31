@@ -5,6 +5,8 @@ const User = require('../blog_models/user_model');
 const { cloudinary } = require('../configs/config');
 const api_error = require('../helpers/api_error');
 const fs = require('fs');
+const dns = require('dns').promises;
+const { sendEmail, generateOTPHtml } = require('../helpers/sendEmail');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'secretkey';
 
@@ -90,32 +92,157 @@ const VerifyToken = (req, res) => {
 
 // POST /register
 const RegisterUser = async (req, res) => {
-    const data = req.body;
+    const { name, email, password } = req.body;
     try {
-        const existingUser = await User.findOne({ email: data.email });
-        if (existingUser) {
-            return res.status(400).json({ message: 'Email already exists' });
+        if (!name || !email || !password) {
+            return res.status(400).json({ message: "All fields (name, email, password) are required." });
         }
-        const hashedPassword = await bcrypt.hash(data.password, 10);
-        const newUser = new User({
-            name: data.name,
-            email: data.email,
-            password: hashedPassword,
-            plainPassword: data.password   // ← added field
-        });
-        await newUser.save();
-        res.status(201).json({ message: 'User registered successfully' });
+
+        const normalizedEmail = email.toLowerCase().trim();
+        const domain = normalizedEmail.split('@')[1];
+
+        // Verify if the email domain actually exists and has mail records
+        try {
+            const mxRecords = await dns.resolveMx(domain);
+            if (!mxRecords || mxRecords.length === 0) {
+                return res.status(400).json({ message: "Invalid email entered, please provide an actual email id" });
+            }
+        } catch (dnsError) {
+            console.error(`DNS lookup failed for ${domain}:`, dnsError.message);
+            return res.status(400).json({ message: "Invalid email entered, please provide an actual email id" });
+        }
+
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        const existingUser = await User.findOne({ email: normalizedEmail });
+
+        if (existingUser) {
+            if (existingUser.isVerified) {
+                return res.status(400).json({ message: "User already exists and is verified. Please log in." });
+            }
+        }
+
+        console.log(`[DEV ONLY] OTP for ${normalizedEmail}: ${otp}`);
+        console.log(`Attempting to send OTP email to: ${normalizedEmail}`);
+
+        try {
+            console.log(`📡 Sending mail...`);
+            const success = await sendEmail(normalizedEmail, 'Verify your email - Blogify', generateOTPHtml(otp, "Email Verification"));
+            
+            if (success) {
+                console.log(`✅ Mail delivered successfully. Proceeding to save user.`);
+
+                const hashedPassword = await bcrypt.hash(password, 10);
+
+                if (existingUser) {
+                    existingUser.name = name;
+                    existingUser.password = hashedPassword;
+                    existingUser.otp = otp;
+                    existingUser.createdAt = Date.now();
+                    await existingUser.save();
+                } else {
+                    const newUser = new User({
+                        name,
+                        email: normalizedEmail,
+                        password: hashedPassword,
+                        otp,
+                        isVerified: false
+                    });
+                    await newUser.save();
+                }
+
+                return res.status(201).json({ message: "Registration successful. Please check your email for the OTP." });
+            } else {
+                return res.status(500).json({ 
+                    message: "Failed to send verification email. Please try again later or check your email domain." 
+                });
+            }
+        } catch (mailError) {
+            console.error("❌ EMAIL ERROR:", mailError.message);
+            return res.status(500).json({ 
+                message: "A network error occurred while sending the email. Nothing has been saved in our database." 
+            });
+        }
     } catch (err) {
+        if (err.code === 11000) {
+            return res.status(400).json({ message: "Email is already taken." });
+        }
         res.status(500).json({ message: 'Error registering user', error: err.message });
+    }
+};
+
+const ValidateEmailDomain = async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) return res.status(400).json({ valid: false });
+
+        const domain = email.split('@')[1];
+        if (!domain) return res.json({ valid: false });
+
+        const mxRecords = await dns.resolveMx(domain);
+        if (mxRecords && mxRecords.length > 0) return res.json({ valid: true });
+        res.json({ valid: false });
+    } catch (error) {
+        res.json({ valid: false });
+    }
+};
+
+const VerifyOTP = async (req, res) => {
+    try {
+        const { email, otp } = req.body;
+        if (!email || !otp) return res.status(400).json({ message: "Email and OTP are required" });
+
+        const normalizedEmail = email.toLowerCase().trim();
+        const user = await User.findOne({ email: normalizedEmail });
+
+        if (!user) return res.status(400).json({ message: "User not found" });
+        if (user.otp !== String(otp).trim()) return res.status(400).json({ message: "Invalid OTP" });
+
+        user.isVerified = true;
+        user.otp = undefined;
+        await user.save();
+
+        res.json({ message: "Email verified successfully." });
+    } catch (error) {
+        res.status(500).json({ message: error.message || "An internal server error occurred." });
+    }
+};
+
+const ResendOTP = async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) return res.status(400).json({ message: "Email is required" });
+
+        const normalizedEmail = email.toLowerCase().trim();
+        const user = await User.findOne({ email: normalizedEmail });
+
+        if (!user) return res.status(400).json({ message: "User not found" });
+        if (user.isVerified) return res.status(400).json({ message: "User is already verified" });
+
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        user.otp = otp;
+        await user.save();
+
+        try {
+            const success = await sendEmail(normalizedEmail, 'Resent OTP - Blogify', generateOTPHtml(otp, "Your New OTP"));
+            if (success) return res.json({ message: "OTP sent successfully. Please check your email." });
+            else throw new Error("Mail connection failed");
+        } catch (mailError) {
+            return res.status(500).json({ message: "Failed to resend OTP. Please try again later." });
+        }
+    } catch (error) {
+        res.status(500).json({ message: "Failed to resend OTP. Please try again later." });
     }
 };
 // POST /login
 const LoginUser = async (req, res, next) => {
     const { email, password } = req.body;
     try {
-        const user = await User.findOne({ email });
+        const user = await User.findOne({ email: email.toLowerCase().trim() });
         if (!user) {
             return next(new api_error('No user found! Please register first', 404));
+        }
+        if (!user.isVerified) {
+            return next(new api_error('Please verify your email first!', 400));
         }
         const isPasswordValid = await bcrypt.compare(password, user.password);
         if (!isPasswordValid) {
@@ -264,4 +391,4 @@ const DeleteUsers = async (req, res) => {
     }
 };
 
-module.exports = { GetAllBlogs, RegisterUser, LoginUser, updateBlog, deleteBlog, VerifyToken, UserDashboard, CreateBlog, LogOutUser, Read_More, GetAllUsers, DeleteUsers};
+module.exports = { GetAllBlogs, RegisterUser, ValidateEmailDomain, VerifyOTP, ResendOTP, LoginUser, updateBlog, deleteBlog, VerifyToken, UserDashboard, CreateBlog, LogOutUser, Read_More, GetAllUsers, DeleteUsers};

@@ -11,8 +11,12 @@ const {
   UserDashboard,
   LogOutUser,
   GetAllUsers,
-  DeleteUsers
+  DeleteUsers,
+  ValidateEmailDomain,
+  VerifyOTP,
+  ResendOTP
 } = require('../controllers/blog_controlller');
+const { registerValidation, loginValidation } = require('../middlewares/validator');
 const checkLogin = require('../middlewares/checklogin');
 const multer = require('multer');
 const path = require('path');
@@ -40,8 +44,11 @@ const upload = multer({ storage: storage });
 // Public routes (no auth needed)
 router.get('/', GetAllBlogs);
 router.get('/read/:id', Read_More);
-router.post('/register', RegisterUser);
-router.post('/login', LoginUser);               // ✅ no auth middleware on login
+router.post('/validate-email-domain', ValidateEmailDomain);
+router.post('/register', registerValidation, RegisterUser);
+router.post('/verify-otp', VerifyOTP);
+router.post('/resend-otp', ResendOTP);
+router.post('/login', loginValidation, LoginUser);               // ✅ no auth middleware on login
 router.post('/logout', LogOutUser);
 router.get('/users', GetAllUsers);
 router.delete('/delete-users', DeleteUsers);
