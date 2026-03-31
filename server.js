@@ -29,9 +29,11 @@ function error_middleware(err, req, res, next) {
 }
 app.use(error_middleware);
 
-app.listen(process.env.PORT, () => {
-    console.log('Server is listening on port', process.env.PORT);
+app.listen(process.env.PORT || 5000, () => {
+    const port = process.env.PORT || 5000;
+    const serverUrl = (process.env.SERVER_URL && process.env.SERVER_URL !== 'undefined') ? process.env.SERVER_URL : `http://localhost:${port}`;
+    console.log('Server is listening on port', port);
     console.log('                   -------------------------');
-    console.log('Server running at: |',process.env.SERVER_URL,'|');
+    console.log('Server running at: |', serverUrl, '|');
     console.log('                   -------------------------');
 });
