@@ -209,7 +209,7 @@ const VerifyOTP = async (req, res) => {
 
 const ResendOTP = async (req, res) => {
     try {
-        const { email } = req.body;
+        const { email, type } = req.body;
         if (!email) return res.status(400).json({ message: "Email is required" });
 
         const normalizedEmail = email.toLowerCase().trim();
@@ -223,7 +223,9 @@ const ResendOTP = async (req, res) => {
         await user.save();
 
         try {
-            const success = await sendEmail(normalizedEmail, 'Resent OTP - Blogify', generateOTPHtml(otp, "Your New OTP"));
+            const subject = type === 'initial' ? 'Verify your email - Blogify' : 'Resent OTP - Blogify';
+            const htmlTitle = type === 'initial' ? 'Email Verification' : 'Your New OTP';
+            const success = await sendEmail(normalizedEmail, subject, generateOTPHtml(otp, htmlTitle));
             if (success) return res.json({ message: "OTP sent successfully. Please check your email." });
             else throw new Error("Mail connection failed");
         } catch (mailError) {
