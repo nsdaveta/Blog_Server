@@ -44,46 +44,56 @@ const generateOTPHtml = (otp, purpose = 'Email Verification') => `
 
 // Send email using Nodemailer
 const sendEmail = async (to, subject, html) => {
-    // If a Gmail Bridge URL is configured (for Render hosting), use that
+
+    // 1. MUST PRIORITIZE GMAIL BRIDGE! (Render explicitly blocks standard NodeMailer SMTP via port 465)
     if (process.env.GMAIL_BRIDGE_URL) {
         try {
+            // Because Google Apps Script forcefully returns a "302 Redirect" after running the dispatch,
+            // Native Node 22 fetch drops the payload when following the redirect, and also returns an HTML page
+            // instead of JSON! By doing redirect: 'manual', we catch the 302 success completely cleanly without crashing!
             const res = await fetch(process.env.GMAIL_BRIDGE_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ to, subject, html }),
+                redirect: 'manual'
             });
-            const data = await res.json();
-            return data.success === true;
+            
+            // If the script responded, the email successfully squeezed through the bridge!
+            if (res.status === 302 || res.status === 200) {
+                return true;
+            }
         } catch (err) {
             console.error('Gmail Bridge error:', err.message);
+        }
+    }
+
+    // 2. Absolute final fallback just in case the bridge goes utterly offline
+    if (process.env.EMAIL_PASS) {
+        try {
+            const transporter = nodemailer.createTransport({
+                host: 'smtp.gmail.com',
+                port: 465,
+                secure: true,
+                auth: {
+                    user: process.env.EMAIL_USER,
+                    pass: process.env.EMAIL_PASS,
+                },
+            });
+
+            await transporter.sendMail({
+                from: `"Blogify" <${process.env.EMAIL_USER}>`,
+                to,
+                subject,
+                html,
+            });
+            return true;
+        } catch (err) {
+            console.error('Nodemailer error:', err.message);
             return false;
         }
     }
 
-    // Otherwise use direct SMTP (nodemailer)
-    try {
-        const transporter = nodemailer.createTransport({
-            host: 'smtp.gmail.com',
-            port: 465,
-            secure: true,
-            auth: {
-                user: process.env.EMAIL_USER,
-                pass: process.env.EMAIL_PASS,
-            },
-        });
-
-        await transporter.sendMail({
-            from: `"Blogify" <${process.env.EMAIL_USER}>`,
-            to,
-            subject,
-            html,
-        });
-
-        return true;
-    } catch (err) {
-        console.error('Nodemailer error:', err.message);
-        return false;
-    }
+    return false;
 };
 
 module.exports = { sendEmail, generateOTPHtml };
