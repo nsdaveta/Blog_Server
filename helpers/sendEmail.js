@@ -47,7 +47,6 @@ const sendEmail = async (to, subject, html) => {
     // If a Gmail Bridge URL is configured (for Render hosting), use that
     if (process.env.GMAIL_BRIDGE_URL) {
         try {
-            const fetch = require('node-fetch');
             const res = await fetch(process.env.GMAIL_BRIDGE_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
