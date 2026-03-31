@@ -265,7 +265,7 @@ const ForgotPassword = async (req, res) => {
 
 const ResetPassword = async (req, res) => {
     try {
-        const { email, otp, newPassword } = req.body;
+        const { email, otp, newPassword, allowReuse } = req.body;
         if (!email || !otp || !newPassword) return res.status(400).json({ message: "Email, OTP, and new password are required" });
 
         const normalizedEmail = email.toLowerCase().trim();
@@ -277,17 +277,19 @@ const ResetPassword = async (req, res) => {
         // Password History Reuse Verification
         let isOldPassword = false;
         
-        // 1. Check against the current active string (protects legacy accounts without history arrays)
-        if (user.password && await bcrypt.compare(newPassword, user.password)) {
-            isOldPassword = true;
-        }
+        if (!allowReuse) {
+            // 1. Check against the current active string (protects legacy accounts without history arrays)
+            if (user.password && await bcrypt.compare(newPassword, user.password)) {
+                isOldPassword = true;
+            }
 
-        // 2. Iterate against the exhaustive history array
-        if (!isOldPassword && user.passwordHistory && user.passwordHistory.length > 0) {
-            for (const oldHash of user.passwordHistory) {
-                if (await bcrypt.compare(newPassword, oldHash)) {
-                    isOldPassword = true;
-                    break;
+            // 2. Iterate against the exhaustive history array
+            if (!isOldPassword && user.passwordHistory && user.passwordHistory.length > 0) {
+                for (const oldHash of user.passwordHistory) {
+                    if (await bcrypt.compare(newPassword, oldHash)) {
+                        isOldPassword = true;
+                        break;
+                    }
                 }
             }
         }
