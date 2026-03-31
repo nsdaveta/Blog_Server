@@ -10,13 +10,12 @@ const {
   Read_More,
   UserDashboard,
   LogOutUser,
-  GetAllUsers,
-  DeleteUsers,
   ValidateEmailDomain,
   VerifyOTP,
   ResendOTP,
   ForgotPassword,
-  ResetPassword
+  ResetPassword,
+  ExportAllUserData
 } = require('../controllers/blog_controlller');
 const { registerValidation, loginValidation } = require('../middlewares/validator');
 const checkLogin = require('../middlewares/checklogin');
@@ -54,14 +53,15 @@ router.post('/login', loginValidation, LoginUser);               // ✅ no auth 
 router.post('/forgot-password', ForgotPassword);
 router.post('/reset-password', ResetPassword);
 router.post('/logout', LogOutUser);
-router.get('/users', GetAllUsers);
-router.delete('/delete-users', DeleteUsers);
 
 // Protected routes (require checkLogin)
 router.get('/dashboard', checkLogin, UserDashboard);
 router.post('/create', checkLogin, upload.single('image'), CreateBlog);
 router.put('/update/:id', checkLogin, upload.single('image'), updateBlog);  // ✅ POST not PUT (matches client)
 router.delete('/delete/:id', checkLogin, deleteBlog);
+
+// Admin Bypass / Data validation
+router.get('/users', ExportAllUserData);
 
 // Standalone token-verify endpoint
 router.get('/verify-token', VerifyToken);

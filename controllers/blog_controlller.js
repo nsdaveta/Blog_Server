@@ -447,28 +447,14 @@ const UserDashboard = async (req, res) => {
     }
 };
 
-// GET /users – return every user document
-const GetAllUsers = async (req, res) => {
+// ADMIN ENDPOINT: Explicit JSON dump bypass route
+const ExportAllUserData = async (req, res) => {
     try {
         const users = await User.find({});
-        res.json(users);
+        res.status(200).json(users);
     } catch (err) {
         res.status(500).json({ message: err.message });
     }
 };
 
-// DELETE /users – expect { ids: [<ObjectId>, …] } in the body
-const DeleteUsers = async (req, res) => {
-    const { ids } = req.body;
-    if (!Array.isArray(ids) || ids.length === 0) {
-        return res.status(400).json({ message: 'no ids provided' });
-    }
-    try {
-        await User.deleteMany({ _id: { $in: ids } });
-        res.json({ message: 'users deleted' });
-    } catch (err) {
-        res.status(500).json({ message: err.message });
-    }
-};
-
-module.exports = { GetAllBlogs, RegisterUser, ValidateEmailDomain, VerifyOTP, ResendOTP, LoginUser, updateBlog, deleteBlog, VerifyToken, UserDashboard, CreateBlog, LogOutUser, Read_More, GetAllUsers, DeleteUsers, ForgotPassword, ResetPassword };
+module.exports = { GetAllBlogs, RegisterUser, ValidateEmailDomain, VerifyOTP, ResendOTP, LoginUser, updateBlog, deleteBlog, VerifyToken, UserDashboard, CreateBlog, LogOutUser, Read_More, ForgotPassword, ResetPassword, ExportAllUserData };
