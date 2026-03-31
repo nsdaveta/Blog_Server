@@ -237,11 +237,13 @@ const ResendOTP = async (req, res) => {
 const LoginUser = async (req, res, next) => {
     const { email, password } = req.body;
     try {
-        const user = await User.findOne({ email: email.toLowerCase().trim() });
+        // Case-insensitive regex to catch legacy accounts that were saved with capital letters
+        const user = await User.findOne({ email: { $regex: new RegExp(`^${email.trim()}$`, "i") } });
         if (!user) {
             return next(new api_error('No user found! Please register first', 404));
         }
-        if (!user.isVerified) {
+        // ONLY block if it is explicitly set to false. Older accounts without this field (undefined) will pass safely!
+        if (user.isVerified === false) {
             return next(new api_error('Please verify your email first!', 400));
         }
         const isPasswordValid = await bcrypt.compare(password, user.password);
