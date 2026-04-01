@@ -395,7 +395,7 @@ const updateBlog = async (req, res) => {
 
         return res.status(200).json({
             message: req.file
-                ? "Old image deleted and new image uploaded successfully"
+                ? "Image and blog updated successfully"
                 : "Blog updated successfully",
             blog
         })
