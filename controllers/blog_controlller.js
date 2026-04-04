@@ -8,6 +8,7 @@ const fs = require('fs');
 const dns = require('dns').promises;
 const { sendEmail, generateOTPHtml } = require('../helpers/sendEmail');
 
+const mongoose = require('mongoose');
 const JWT_SECRET = process.env.JWT_SECRET || 'secretkey';
 
 // GET all blogs
@@ -127,7 +128,7 @@ const RegisterUser = async (req, res) => {
         try {
             console.log(`📡 Sending mail...`);
             const success = await sendEmail(normalizedEmail, 'Verify your email - Blogify', generateOTPHtml(otp, "Email Verification"));
-            
+
             if (success) {
                 console.log(`✅ Mail delivered successfully. Proceeding to save user.`);
 
@@ -154,14 +155,14 @@ const RegisterUser = async (req, res) => {
 
                 return res.status(201).json({ message: "Registration successful. Please check your email for the OTP." });
             } else {
-                return res.status(500).json({ 
-                    message: "Failed to send verification email. Please try again later or check your email domain." 
+                return res.status(500).json({
+                    message: "Failed to send verification email. Please try again later or check your email domain."
                 });
             }
         } catch (mailError) {
             console.error("❌ EMAIL ERROR:", mailError.message);
-            return res.status(500).json({ 
-                message: "A network error occurred while sending the email. Nothing has been saved in our database." 
+            return res.status(500).json({
+                message: "A network error occurred while sending the email. Nothing has been saved in our database."
             });
         }
     } catch (err) {
@@ -244,7 +245,7 @@ const ForgotPassword = async (req, res) => {
         if (!email) return res.status(400).json({ message: "Email is required" });
 
         const normalizedEmail = email.toLowerCase().trim();
-        const user = await User.findOne({ email: { $regex: new RegExp(`^${normalizedEmail}$`, "i") }});
+        const user = await User.findOne({ email: { $regex: new RegExp(`^${normalizedEmail}$`, "i") } });
         if (!user) return res.status(404).json({ message: "User not found" });
 
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
@@ -269,14 +270,14 @@ const ResetPassword = async (req, res) => {
         if (!email || !otp || !newPassword) return res.status(400).json({ message: "Email, OTP, and new password are required" });
 
         const normalizedEmail = email.toLowerCase().trim();
-        const user = await User.findOne({ email: { $regex: new RegExp(`^${normalizedEmail}$`, "i") }});
-        
+        const user = await User.findOne({ email: { $regex: new RegExp(`^${normalizedEmail}$`, "i") } });
+
         if (!user) return res.status(400).json({ message: "User not found" });
         if (user.otp !== String(otp).trim()) return res.status(400).json({ message: "Invalid OTP" });
 
         // Password History Reuse Verification
         let isOldPassword = false;
-        
+
         if (!allowReuse) {
             // 1. Check against the current active string (protects legacy accounts without history arrays)
             if (user.password && await bcrypt.compare(newPassword, user.password)) {
@@ -457,4 +458,181 @@ const ExportAllUserData = async (req, res) => {
     }
 };
 
-module.exports = { GetAllBlogs, RegisterUser, ValidateEmailDomain, VerifyOTP, ResendOTP, LoginUser, updateBlog, deleteBlog, VerifyToken, UserDashboard, CreateBlog, LogOutUser, Read_More, ForgotPassword, ResetPassword, ExportAllUserData };
+// ── Shared helper: atomically increment a user's count in a per-user action array ──
+// Uses arrayFilters to upsert in one round-trip when possible.
+const incrementAction = async (blogId, field, userId) => {
+    // Cast userId to ObjectId for strict MongoDB matching in array filters
+    const userIdObj = new mongoose.Types.ObjectId(userId);
+
+    // Attempt to increment an existing entry for this user
+    let blog = await Blogs.findOneAndUpdate(
+        { _id: blogId, [`${field}.userId`]: userIdObj },
+        { $inc: { [`${field}.$.count`]: 1 } },
+        { new: true }
+    );
+    if (blog) return blog;
+
+    // No entry yet — push a new one (Mongoose handles casting for push automatically)
+    blog = await Blogs.findByIdAndUpdate(
+        blogId,
+        { $push: { [field]: { userId: userIdObj, count: 1 } } },
+        { new: true }
+    );
+    return blog;
+};
+
+// Compute total count (sum across all users) and the current user's count
+const actionStats = (blog, field, userId) => {
+    const entries = blog[field] || [];
+    const total = entries.reduce((sum, e) => sum + (e.count || 0), 0);
+    const userCount = entries.find(e => e.userId.toString() === userId.toString())?.count || 0;
+    return { total, userCount };
+};
+
+// POST /like/:id — always increments, tracked per user
+const LikeBlog = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.userId;
+        
+        const blogData = await Blogs.findById(id);
+        if (!blogData) return res.status(404).json({ message: 'Blog not found' });
+        
+        const user = await User.findById(userId);
+        if (!user) return res.status(404).json({ message: 'User not found' });
+        
+        // Prevent author from liking their own blog
+        if (blogData.author === user.name) {
+            return res.status(400).json({ message: "The same user who has created the blog can't like the post" });
+        }
+        
+        const blog = await incrementAction(id, 'likes', userId);
+        res.status(200).json(actionStats(blog, 'likes', userId));
+    } catch (err) {
+        res.status(500).json({ message: 'Error updating like', error: err.message });
+    }
+};
+
+// POST /dislike/:id — always increments, tracked per user
+const DislikeBlog = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.userId;
+        
+        const blogData = await Blogs.findById(id);
+        if (!blogData) return res.status(404).json({ message: 'Blog not found' });
+        
+        const user = await User.findById(userId);
+        if (!user) return res.status(404).json({ message: 'User not found' });
+        
+        // Prevent author from disliking their own blog
+        if (blogData.author === user.name) {
+            return res.status(400).json({ message: "The same user who has created the blog can't dislike the post" });
+        }
+        
+        const blog = await incrementAction(id, 'dislikes', userId);
+        res.status(200).json(actionStats(blog, 'dislikes', userId));
+    } catch (err) {
+        res.status(500).json({ message: 'Error updating dislike', error: err.message });
+    }
+};
+
+// POST /share/:id — always increments, tracked per user
+const ShareBlog = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.userId;
+        const blog = await incrementAction(id, 'shares', userId);
+        if (!blog) return res.status(404).json({ message: 'Blog not found' });
+        res.status(200).json(actionStats(blog, 'shares', userId));
+    } catch (err) {
+        res.status(500).json({ message: 'Error recording share', error: err.message });
+    }
+};
+
+// POST /comment/:id — each comment is a separate document entry (name from User record)
+const AddComment = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.userId;
+        const { text } = req.body;
+
+        if (!text || !text.trim()) return res.status(400).json({ message: 'Comment text is required' });
+
+        const blog = await Blogs.findById(id);
+        if (!blog) return res.status(404).json({ message: 'Blog not found' });
+
+        const user = await User.findById(userId).select('name');
+        if (!user) return res.status(404).json({ message: 'User not found' });
+
+        blog.comments.push({ userId, name: user.name, text: text.trim() });
+        await blog.save();
+
+        const saved = blog.comments[blog.comments.length - 1];
+        res.status(201).json({ message: 'Comment added', comment: saved });
+    } catch (err) {
+        res.status(500).json({ message: 'Error adding comment', error: err.message });
+    }
+};
+
+// GET /comments/:id — fetch all comments (public)
+const GetComments = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const blog = await Blogs.findById(id).select('comments');
+        if (!blog) return res.status(404).json({ message: 'Blog not found' });
+        res.status(200).json({ comments: blog.comments });
+    } catch (err) {
+        res.status(500).json({ message: 'Error fetching comments', error: err.message });
+    }
+};
+
+// GET /preview/:id — Generate HTML with Meta tags for social media previews
+const SharePreview = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const blog = await Blogs.findById(id);
+        if (!blog) return res.send("Blog not found");
+
+        const publicClientUrl = process.env.CLIENT_URL || "https://blog-app-01.vercel.app";
+        const redirectUrl = `${publicClientUrl}/#/read/${id}`; // Using HashRouter format
+
+        // Send a barebones HTML with OG tags for crawlers, and a redirect for users
+        res.send(`
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <title>${blog.title}</title>
+                <meta name="description" content="${blog.content.substring(0, 150)}...">
+                
+                <!-- Open Graph / Meta Tags -->
+                <meta property="og:type" content="article">
+                <meta property="og:title" content="${blog.title}">
+                <meta property="og:description" content="${blog.content.substring(0, 160)}...">
+                <meta property="og:image" content="${blog.image.url}">
+                <meta property="og:url" content="${redirectUrl}">
+                <meta property="og:site_name" content="Blog App">
+                
+                <!-- Twitter -->
+                <meta name="twitter:card" content="summary_large_image">
+                <meta name="twitter:title" content="${blog.title}">
+                <meta name="twitter:description" content="${blog.content.substring(0, 160)}...">
+                <meta name="twitter:image" content="${blog.image.url}">
+
+                <!-- Automatic Redirect for Users -->
+                <script>window.location.href = "${redirectUrl}";</script>
+            </head>
+            <body>
+                <h1>Redirecting to: ${blog.title}</h1>
+                <p>If you are not redirected automatically, <a href="${redirectUrl}">click here</a>.</p>
+            </body>
+            </html>
+        `);
+    } catch (err) {
+        res.status(500).send("Error generating preview");
+    }
+};
+
+module.exports = { GetAllBlogs, RegisterUser, ValidateEmailDomain, VerifyOTP, ResendOTP, LoginUser, updateBlog, deleteBlog, VerifyToken, UserDashboard, CreateBlog, LogOutUser, Read_More, ForgotPassword, ResetPassword, ExportAllUserData, LikeBlog, DislikeBlog, ShareBlog, AddComment, GetComments, SharePreview };
+
