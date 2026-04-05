@@ -625,10 +625,18 @@ const GetComments = async (req, res) => {
 const SharePreview = async (req, res) => {
     try {
         const { id } = req.params;
-        const publicClientUrl = process.env.CLIENT_URL || "https://blog-app-01.vercel.app";
+        let publicClientUrl = process.env.CLIENT_URL || "https://blog-app-01.vercel.app";
+        
+        // Ensure protocol exists (prevent relative redirects)
+        if (!publicClientUrl.startsWith('http')) {
+            publicClientUrl = `https://${publicClientUrl}`;
+        }
+        // Remove trailing slash
+        publicClientUrl = publicClientUrl.replace(/\/+$/, "");
 
-        // Special case for home page preview or app URL (as seen in user screenshot)
-        if (id === "blog-app-01.vercel.app" || id === "homepage") {
+        // Special case for home page preview or absolute app URL cases
+        // We also check if the domain is present in the ID to handle malformed crawler hits
+        if (id === "blog-app-01.vercel.app" || id === "homepage" || id.includes("vercel.app")) {
             const redirectUrl = `${publicClientUrl}/`;
             return res.send(`
                 <!DOCTYPE html>
