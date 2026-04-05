@@ -489,51 +489,85 @@ const actionStats = (blog, field, userId) => {
     return { total, userCount };
 };
 
-// POST /like/:id — always increments, tracked per user
+// POST /like/:id — Dynamic Toggle & Mutual Exclusivity
 const LikeBlog = async (req, res) => {
     try {
         const { id } = req.params;
         const userId = req.userId;
-        
-        const blogData = await Blogs.findById(id);
-        if (!blogData) return res.status(404).json({ message: 'Blog not found' });
-        
+        const blog = await Blogs.findById(id);
+        if (!blog) return res.status(404).json({ message: 'Blog not found' });
+
         const user = await User.findById(userId);
         if (!user) return res.status(404).json({ message: 'User not found' });
-        
-        // Prevent author from liking their own blog
-        if (blogData.author === user.name) {
+
+        // Author Restriction
+        if (blog.author === user.name) {
             return res.status(400).json({ message: "The same user who has created the blog can't like the post" });
         }
-        
-        const blog = await incrementAction(id, 'likes', userId);
-        res.status(200).json(actionStats(blog, 'likes', userId));
+
+        // Toggle Like: Check if already liked
+        const userLikeIndex = blog.likes.findIndex(item => item.userId.toString() === userId.toString());
+
+        if (userLikeIndex !== -1) {
+            blog.likes.splice(userLikeIndex, 1);
+        } else {
+            blog.likes.push({ userId, count: 1 });
+            // Mutual Exclusivity: Remove Dislike if present
+            blog.dislikes = blog.dislikes.filter(item => item.userId.toString() !== userId.toString());
+        }
+
+        await blog.save();
+
+        const stats = {
+            total: blog.likes.reduce((sum, e) => sum + (e.count || 0), 0),
+            userCount: blog.likes.find(e => e.userId.toString() === userId.toString())?.count || 0,
+            dislikesTotal: blog.dislikes.reduce((sum, e) => sum + (e.count || 0), 0)
+        };
+
+        res.status(200).json(stats);
     } catch (err) {
-        res.status(500).json({ message: 'Error updating like', error: err.message });
+        res.status(500).json({ message: 'Like operation failed' });
     }
 };
 
-// POST /dislike/:id — always increments, tracked per user
+// POST /dislike/:id — Dynamic Toggle & Mutual Exclusivity
 const DislikeBlog = async (req, res) => {
     try {
         const { id } = req.params;
         const userId = req.userId;
-        
-        const blogData = await Blogs.findById(id);
-        if (!blogData) return res.status(404).json({ message: 'Blog not found' });
-        
+        const blog = await Blogs.findById(id);
+        if (!blog) return res.status(404).json({ message: 'Blog not found' });
+
         const user = await User.findById(userId);
         if (!user) return res.status(404).json({ message: 'User not found' });
-        
-        // Prevent author from disliking their own blog
-        if (blogData.author === user.name) {
+
+        // Author Restriction
+        if (blog.author === user.name) {
             return res.status(400).json({ message: "The same user who has created the blog can't dislike the post" });
         }
-        
-        const blog = await incrementAction(id, 'dislikes', userId);
-        res.status(200).json(actionStats(blog, 'dislikes', userId));
+
+        // Toggle Dislike: Check if already disliked
+        const userDislikeIndex = blog.dislikes.findIndex(item => item.userId.toString() === userId.toString());
+
+        if (userDislikeIndex !== -1) {
+            blog.dislikes.splice(userDislikeIndex, 1);
+        } else {
+            blog.dislikes.push({ userId, count: 1 });
+            // Mutual Exclusivity: Remove Like if present
+            blog.likes = blog.likes.filter(item => item.userId.toString() !== userId.toString());
+        }
+
+        await blog.save();
+
+        const stats = {
+            total: blog.dislikes.reduce((sum, e) => sum + (e.count || 0), 0),
+            userCount: blog.dislikes.find(e => e.userId.toString() === userId.toString())?.count || 0,
+            likesTotal: blog.likes.reduce((sum, e) => sum + (e.count || 0), 0)
+        };
+
+        res.status(200).json(stats);
     } catch (err) {
-        res.status(500).json({ message: 'Error updating dislike', error: err.message });
+        res.status(500).json({ message: 'Dislike operation failed' });
     }
 };
 
@@ -591,10 +625,36 @@ const GetComments = async (req, res) => {
 const SharePreview = async (req, res) => {
     try {
         const { id } = req.params;
-        const blog = await Blogs.findById(id);
-        if (!blog) return res.send("Blog not found");
-
         const publicClientUrl = process.env.CLIENT_URL || "https://blog-app-01.vercel.app";
+
+        // Special case for home page preview or app URL (as seen in user screenshot)
+        if (id === "blog-app-01.vercel.app" || id === "homepage") {
+            const redirectUrl = `${publicClientUrl}/`;
+            return res.send(`
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="UTF-8">
+                    <title>Blog App — Home</title>
+                    <meta name="description" content="Discover insightful articles and stories.">
+                    <meta property="og:type" content="website">
+                    <meta property="og:title" content="Blog App">
+                    <meta property="og:description" content="Read the latest stories from our community.">
+                    <meta property="og:image" content="${publicClientUrl}/favicon.png">
+                    <meta property="og:url" content="${redirectUrl}">
+                    <script>window.location.href = "${redirectUrl}";</script>
+                </head>
+                <body><h1>Redirecting to Home...</h1></body>
+                </html>
+            `);
+        }
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).send("Blog not found");
+        }
+        const blog = await Blogs.findById(id);
+        if (!blog) return res.status(404).send("Blog not found");
+
         const redirectUrl = `${publicClientUrl}/#/read/${id}`; // Using HashRouter format
 
         // Send a barebones HTML with OG tags for crawlers, and a redirect for users
